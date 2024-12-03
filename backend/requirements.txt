@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+asyncio
+python-multipart
+pydantic
+python3-nmap>=1.9.1
