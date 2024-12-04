@@ -1,4 +1,4 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import nmap3
 import asyncio
@@ -6,8 +6,10 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from pydantic import BaseModel
 import socket
-import subprocess
-from collections import defaultdict
+import logging
+import multiprocessing
+from multiprocessing import Process, Manager, Event
+import time
 
 app = FastAPI()
 
@@ -20,9 +22,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global storage for discovered nodes
-discovered_nodes: Dict[str, dict] = {}
-scanning = False
+# Initialize process manager and shared data
+manager = Manager()
+discovered_nodes = manager.dict()
+scan_process: Optional[Process] = None
+scan_stop_event = Event()
 
 class Node(BaseModel):
     ip: str
@@ -33,25 +37,41 @@ class Node(BaseModel):
     last_seen: str
     status: str
 
-async def scan_network():
-    global scanning, discovered_nodes
+
+def generate_ip_list():
+    base_ip = "192.168.1."
+    return [f"{base_ip}{i}" for i in range(1, 255)]
+
+
+def scan_network(discovered_nodes_shared, stop_event):
     nmap = nmap3.Nmap()
     nmap_scan = nmap3.NmapScanTechniques()
 
-    while scanning:
+    while not stop_event.is_set():
         try:
-            # Perform host discovery using ping scan
-            results = nmap_scan.nmap_ping_scan("192.168.1.0/24")
+            # Generate list of IPs to scan
+            ip_list = generate_ip_list()
 
-            # Process each host
-            for ip in results:
-                if ip == "stats" or ip == "runtime" or ip == "task_results":  # Skip summary entries
-                    continue
+            # Scan each IP individually
+            for ip in ip_list:
+                if stop_event.is_set():  # Check if scanning was stopped
+                    break
+
+                logging.info(f"Scanning {ip}")
+
+                # Perform host discovery using ping scan for single IP
+                results = nmap_scan.nmap_ping_scan(ip)
+
+                # Skip if host is down
+                if ip in results and isinstance(results[ip], dict):
+                    state = results[ip].get('state', {}).get('state', 'down')
+                    if state == 'down':
+                        continue
 
                 # Get version detection for the host
                 version_results = nmap.nmap_version_detection(ip)
 
-                # Try OS detection (requires root/admin privileges)
+                # Try OS detection (requires root/admin privileges) TODO admin
                 try:
                     os_results = nmap.nmap_os_detection(ip)
                     os_info = os_results[0]["name"] if os_results else None
@@ -77,42 +97,68 @@ async def scan_network():
                 except socket.herror:
                     hostname = None
 
-                # Update discovered nodes
+                # Get mac address
+                try:
+                    mac_address = nmap.nmap_arp_discovery(ip)
+                    mac_address = mac_address[ip]["macaddress"][0]["addr"]
+                except Exception:
+                    mac_address = None
+
+                # Update discovered nodes immediately for this IP
                 node_info = Node(
                     ip=ip,
                     hostname=hostname,
+                    mac_address=mac_address,
                     os=os_info,
                     open_ports=open_ports,
                     last_seen=datetime.now().isoformat(),
                     status="up"
                 )
-                discovered_nodes[ip] = node_info.model_dump()
-
-            await asyncio.sleep(60)  # Scan every minute
+                discovered_nodes_shared[ip] = node_info.dict()
 
         except Exception as e:
             print(f"Error during network scan: {str(e)}")
-            await asyncio.sleep(5)  # Wait before retrying on error
+            if not stop_event.is_set():
+                # Wait before retrying on error
+                for _ in range(50):  # Split the sleep into smaller chunks
+                    if stop_event.is_set():
+                        break
+                    time.sleep(0.1)
 
-@app.get("/start_scan")
-async def start_scan(background_tasks: BackgroundTasks):
-    global scanning
-    if not scanning:
-        scanning = True
-        background_tasks.add_task(scan_network)
-        return {"message": "Network scanning started"}
-    return {"message": "Scanning already in progress"}
 
-@app.get("/stop_scan")
+@app.post("/start_scan")
+async def start_scan():
+    global scan_process
+    if not scan_process or not scan_process.is_alive():
+        scan_stop_event.clear()
+        scan_process = Process(
+            target=scan_network,
+            args=(discovered_nodes, scan_stop_event),
+            daemon=True
+        )
+        scan_process.start()
+        return {"message": "Scanning started"}
+    return {"message": "Scan already in progress"}
+
+
+@app.post("/stop_scan")
 async def stop_scan():
-    global scanning
-    scanning = False
-    return {"message": "Network scanning stopped"}
+    global scan_process
+    if scan_process and scan_process.is_alive():
+        scan_stop_event.set()
+        scan_process.join(timeout=1)
+        if scan_process.is_alive():
+            scan_process.terminate()
+    return {"message": "Scanning stopped"}
 
-@app.get("/nodes")
+
+@app.get("/nodes", response_model=List[Node])
 async def get_nodes():
     return list(discovered_nodes.values())
 
+
 if __name__ == "__main__":
+    # Set start method for Windows
+    multiprocessing.set_start_method('spawn')
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

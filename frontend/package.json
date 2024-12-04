@@ -7,9 +7,11 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"openapi-ts": "openapi-ts -i http://localhost:8000/openapi.json -o src/lib/api -c @hey-api/client-fetch"
 	},
 	"devDependencies": {
+		"@hey-api/openapi-ts": "^0.58.0",
 		"@sveltejs/adapter-auto": "^3.0.0",
 		"@sveltejs/kit": "^2.9.0",
 		"@sveltejs/vite-plugin-svelte": "^5.0.0",
@@ -22,6 +24,7 @@
 		"vite": "^6.0.0"
 	},
 	"dependencies": {
+		"@hey-api/client-fetch": "^0.5.0",
 		"@tailwindcss/typography": "^0.5.15",
 		"cytoscape": "^3.30.4"
 	}

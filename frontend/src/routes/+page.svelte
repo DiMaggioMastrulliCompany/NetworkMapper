@@ -1,12 +1,14 @@
-<script>
+<script lang="ts">
     import { onMount, onDestroy } from "svelte";
+    import { getNodesNodesGet } from "$lib/api";
+    import type { Node } from "$lib/api";
     import cytoscape from "cytoscape";
 
-    let container;
-    let cy;
+    let container: HTMLDivElement;
+    let cy: cytoscape.Core;
     let scanning = false;
-    let nodes = [];
-    let updateInterval;
+    let nodes: Node[] = [];
+    let updateInterval: number | undefined;
 
     onMount(() => {
         cy = cytoscape({
@@ -69,17 +71,17 @@
     }
 
     async function fetchNodes() {
-        try {
-            const response = await fetch("http://localhost:8000/nodes");
-            const newNodes = await response.json();
-            updateGraph(newNodes);
-            nodes = newNodes;
-        } catch (error) {
-            console.error("Error fetching nodes:", error);
+        const response = await getNodesNodesGet();
+
+        if (!response.data) {
+            return;
         }
+        const newNodes = response.data;
+        updateGraph(newNodes);
+        nodes = newNodes;
     }
 
-    function updateGraph(newNodes) {
+    function updateGraph(newNodes: Node[]) {
         cy.elements().remove();
 
         // Add nodes
@@ -132,7 +134,7 @@
                         <p>IP: {node.ip}</p>
                         <p>OS: {node.os || "Unknown"}</p>
                         <p>Status: {node.status}</p>
-                        {#if node.open_ports.length > 0}
+                        {#if node.open_ports && node.open_ports.length > 0}
                             <div class="mt-2">
                                 <p class="font-semibold">Open Ports:</p>
                                 <ul class="list-disc list-inside">
