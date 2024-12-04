@@ -28,8 +28,8 @@ scan_stop_event = threading.Event()
 
 class Node(BaseModel):
     ip: str
+    mac_address: str = None
     hostname: Optional[str] = None
-    mac_address: Optional[str] = None
     os: Optional[str] = None
     open_ports: List[Dict[str, int | str]] = []
     last_seen: str
@@ -39,10 +39,35 @@ class Node(BaseModel):
     gateway: Optional[str] = None  # Gateway IP if this is detected
     hop_distance: Optional[int] = None  # Number of hops from the scanning machine
 
+    def update_topology(self, path: List[str]) -> None:
+        """Update topology-related information"""
+        if path:
+            self.hop_distance = len(path)
+            self.gateway = path[0] if path else None
+            self.connected_to = path[:-1] if len(path) > 1 else []
 
-def generate_ip_list():
-    base_ip = "192.168.1."
-    return [f"{base_ip}{i}" for i in range(1, 255)]
+    def update_ports(self, ports_data: List[Dict[str, str | int]]) -> None:
+        """Update port information"""
+        self.open_ports = ports_data
+
+    def update_basic_info(self, hostname: Optional[str] = None,
+                         mac_address: Optional[str] = None,
+                         os: Optional[str] = None) -> None:
+        """Update basic node information"""
+        if hostname is not None:
+            self.hostname = hostname
+        if mac_address is not None:
+            self.mac_address = mac_address
+        if os is not None:
+            self.os = os
+
+    def touch(self) -> None:
+        """Update last seen timestamp"""
+        self.last_seen = datetime.now().isoformat()
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses"""
+        return self.model_dump()
 
 
 def get_traceroute(ip: str) -> List[str]:
@@ -58,18 +83,35 @@ def get_traceroute(ip: str) -> List[str]:
 
 def scan_network():
     global discovered_nodes
-    nm = nmap.PortScanner()
 
     while not scan_stop_event.is_set():
         try:
             # Step 1: Fast ping sweep of the entire subnet
+            nm = nmap.PortScanner()
             print("Starting fast ping sweep...")
             active_ips = set()
+
+            # Initial scan with MAC address detection
             nm.scan(hosts="192.168.1.0/24", arguments="-sn")
 
+            # Process discovered hosts
             for ip in nm.all_hosts():
                 if nm[ip].state() != 'down':
                     active_ips.add(ip)
+                    if ip not in discovered_nodes:
+                        # Get MAC address from initial scan
+                        mac = "unknown"
+                        if 'addresses' in nm[ip]:
+                            mac = nm[ip]['addresses'].get('mac', "unknown")
+
+                        # Add basic node info immediately
+                        node = Node(
+                            ip=ip,
+                            mac_address=mac,
+                            last_seen=datetime.now().isoformat(),
+                            status="up"
+                        )
+                        discovered_nodes[ip] = node.to_dict()
 
             print(f"Found {len(active_ips)} active hosts")
 
@@ -85,6 +127,11 @@ def scan_network():
                         'path': hops,
                         'hop_distance': len(hops)
                     }
+                    # Update node with topology information
+                    if ip in discovered_nodes:
+                        node = Node(**discovered_nodes[ip])
+                        node.update_topology(hops)
+                        discovered_nodes[ip] = node.to_dict()
 
             # Step 3: Detailed scan of active hosts
             for ip in active_ips:
@@ -92,12 +139,14 @@ def scan_network():
                     break
 
                 print(f"Detailed scan of {ip}")
+                node = Node(**discovered_nodes[ip])
 
                 # Get hostname
                 try:
                     hostname = socket.gethostbyaddr(ip)[0]
+                    node.update_basic_info(hostname=hostname)
                 except socket.herror:
-                    hostname = None
+                    pass
 
                 # Version detection scan
                 nm.scan(ip, arguments="-sV -T4 --version-intensity 5")
@@ -116,51 +165,17 @@ def scan_network():
                                 "product": service.get("product", "unknown")
                             }
                             open_ports.append(port_data)
+                node.update_ports(open_ports)
 
                 # Get OS info
                 nm.scan(ip, arguments="-O")
-                os_info = None
                 if ip in nm.all_hosts() and 'osmatch' in nm[ip]:
                     if len(nm[ip]['osmatch']) > 0:
-                        os_info = nm[ip]['osmatch'][0].get('name')
+                        node.update_basic_info(os=nm[ip]['osmatch'][0].get('name'))
 
-                # Get MAC address
-                nm.scan(ip, arguments="-sn -PR")
-                mac_address = None
-                if ip in nm.all_hosts() and 'addresses' in nm[ip]:
-                    mac_address = nm[ip]['addresses'].get('mac')
-
-                # Determine connections based on topology
-                connected_to = []
-                hop_distance = None
-                gateway = None
-
-                if ip in topology_map:
-                    path = topology_map[ip]['path']
-                    hop_distance = topology_map[ip]['hop_distance']
-
-                    # First hop after local network is typically the gateway
-                    if len(path) > 0:
-                        gateway = path[0]
-
-                    # Add connections based on network path
-                    if len(path) > 1:
-                        connected_to.extend(path[:-1])  # Connect to all hops except itself
-
-                # Update discovered nodes
-                node_info = Node(
-                    ip=ip,
-                    hostname=hostname,
-                    mac_address=mac_address,
-                    os=os_info,
-                    open_ports=open_ports,
-                    last_seen=datetime.now().isoformat(),
-                    status="up",
-                    connected_to=connected_to,
-                    gateway=gateway,
-                    hop_distance=hop_distance
-                )
-                discovered_nodes[ip] = node_info.model_dump()  # .dict() is deprecated
+                # Update last seen timestamp
+                node.touch()
+                discovered_nodes[ip] = node.to_dict()
 
             # Wait before next scan cycle
             for _ in range(50):  # 5 seconds with frequent checks for stop event
@@ -199,7 +214,7 @@ async def stop_scan():
 
 @app.get("/nodes", response_model=List[Node])
 async def get_nodes():
-    return list(discovered_nodes.values())
+    return [Node(**node) for node in discovered_nodes.values()]
 
 
 if __name__ == "__main__":
