@@ -78,7 +78,7 @@
             throw new Error("Error starting scan");
         }
         scanning = true;
-        updateInterval = setInterval(fetchNodes, 5000);
+        let updateInterval = setInterval(fetchNodes, 5000); // mancava il let
     }
 
     async function stopScan() {
@@ -119,7 +119,8 @@
                     type: node.gateway ? 'gateway' : 'host',
                     hopDistance: node.hop_distance,
                     os: node.os,
-                    ports: node.open_ports.map(p => `${p.port}/${p.service}`).join(', '),
+                    ports: (node.open_ports?.map(p => `${p.port}/${p.service}`).join(', ') || 'No open ports mm'),
+                    // controllare ma il rosso è sparito
                     mac: node.mac_address
                 }
             });
