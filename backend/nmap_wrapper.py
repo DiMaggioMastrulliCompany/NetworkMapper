@@ -88,7 +88,6 @@ class NmapWrapper(PortScanner):
             self._scan_result = partial_scan_result
             return partial_scan_result
 
-
         except Exception as e:
             if len(nmap_err) > 0:
                 raise PortScannerError(nmap_err)

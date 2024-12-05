@@ -5,10 +5,13 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Dict, List, Optional
 
-from nmap_wrapper import NmapWrapper as PortScanner
+import psutil
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+from localhostinfo import get_internet_interface_info
+from nmap_wrapper import NmapWrapper as PortScanner
 
 app = FastAPI()
 
@@ -24,18 +27,25 @@ app.add_middleware(
 
 class Node(BaseModel):
     ip: str
-    mac_address: str = None
+    mac_address: Optional[str] = None
     hostname: Optional[str] = None
     os: Optional[str] = None
     open_ports: List[Dict[str, int | str]] = []
     last_seen: str
     status: str
+    other_info: Dict[str, str] = {}
     # Topology related fields
     connected_to: List[str] = []  # List of IPs this node is connected to
     hop_distance: Optional[int] = None  # Number of hops from the scanning machine
 
     def add_edge(self, ip: str):
         self.connected_to.append(ip)
+
+    def set_hop_distance(self, distance: int) -> bool:
+        if self.hop_distance is None or self.hop_distance > distance:
+            self.hop_distance = distance
+            return True
+        return False
 
     def update_ports(self, ports_data: List[Dict[str, str | int]]) -> None:
         """Update port information"""
@@ -61,8 +71,36 @@ class Node(BaseModel):
         return self.model_dump()
 
 
+class Hop(BaseModel):
+    ip: str
+    ttl: int
+    rtt: float
+    host: Optional[str]
+
+    @classmethod
+    def from_nmap_hop(cls, hop):
+        return cls(
+            ip=hop.get('ipaddr'),
+            ttl=int(hop.get('ttl')),
+            rtt=float(hop.get('rtt')),
+            host=hop.get('host') or None
+        )
+
+
 class Nodes:
-    nodes: Dict[str, Node]
+    localhost_ip: str
+    nodes: Dict[str, Node] = {}
+
+    def __init__(self, localhost_ip: str):
+        self.localhost_ip = localhost_ip
+
+        # Add localhost node
+        self.add_node(self.get_localhost_node())
+
+    def get_localhost_node(self) -> Node:
+        localhost_info = get_internet_interface_info()
+        localhost_mac = localhost_info['mac'] if localhost_info else None
+        return Node(ip=self.localhost_ip, status="up", last_seen=datetime.now().isoformat(), mac_address=localhost_mac)
 
     def add_node(self, node: Node):
         self.nodes[node.ip] = node
@@ -70,23 +108,27 @@ class Nodes:
     def get_nodes(self):
         return list(self.nodes.values())
 
-    def add_hop_list(self, ip: str, hops: List[str], hop_distance: int):
+    def contains_ip(self, ip: str) -> bool:
+        return ip in self.nodes
+
+    def add_hop_list(self, ip: str, hops: List[Hop]):
         if len(hops) < 1:
             return
 
-        if ip not in hops:
-            hops.append(ip)
+        # if hops[-1].ip != ip:
+        #     hops.append(Hop(ip=ip, ttl=0, rtt=0, host=None))
+
+        self.nodes[self.localhost_ip].add_edge(ip)
+        self.nodes[hops[0].ip].set_hop_distance(hops[0].ttl)
+
         for i in range(len(hops) - 1):
-            current_node_ip = hops[i]
-            next_node_ip = hops[i+1]
-            self.nodes[current_node_ip].add_edge(next_node_ip)
+            current_hop = hops[i]
+            next_hop = hops[i + 1]
+            self.nodes[current_hop.ip].add_edge(next_hop.ip)
+            self.nodes[next_hop.ip].set_hop_distance(next_hop.ttl)
 
-
-
-# Global storage for discovered nodes
-discovered_nodes: Dict[str, Node] = {}
-scan_thread: Optional[threading.Thread] = None
-scan_stop_event = threading.Event()
+    def get_node(self, ip: str) -> Node:
+        return self.nodes[ip]
 
 
 @lru_cache(maxsize=1)
@@ -95,6 +137,33 @@ def get_lan_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.connect(("8.8.8.8", 80))
     return s.getsockname()[0]
+
+
+def get_localhost_mac():
+    try:
+        # Find the default gateway to identify the active interface
+        gateways = psutil.net_if_stats()
+        default_iface = None
+        for iface, stats in gateways.items():
+            if stats.isup:  # Only consider interfaces that are UP
+                default_iface = iface
+                break
+
+        if not default_iface:
+            raise Exception("No active network interface found.")
+
+        # Get MAC address for the active interface
+        interfaces = psutil.net_if_addrs()
+        for iface, addrs in interfaces.items():
+            if iface == default_iface:
+                for addr in addrs:
+                    if addr.family == psutil.AF_LINK:
+                        return addr.address
+
+        raise Exception("MAC address not found for active interface.")
+
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
 def get_traceroute(ip: str) -> List[str]:
@@ -109,8 +178,6 @@ def get_traceroute(ip: str) -> List[str]:
 
 
 def scan_network():
-    global discovered_nodes
-
     while not scan_stop_event.is_set():
         try:
             # Step 1: Fast ping sweep of the entire subnet
@@ -125,7 +192,7 @@ def scan_network():
             for ip in nm.all_hosts():
                 if nm[ip].state() != 'down':
                     active_ips.add(ip)
-                    if ip not in discovered_nodes:
+                    if not nodes.contains_ip(ip):
                         # Get MAC address from initial scan
                         mac = "unknown"
                         if 'addresses' in nm[ip]:
@@ -133,45 +200,22 @@ def scan_network():
 
                         # Create new node
                         node = Node(ip=ip, mac_address=mac, status="up", last_seen=datetime.now().isoformat())
-                        discovered_nodes[ip] = node
+                        nodes.add_node(node)
 
                     # Process traceroute data if available
                     if 'trace' in nm[ip]:
-                        trace_path = []
+                        trace_path: List[Hop] = []
                         trace_data = nm[ip]['trace']
 
                         # Process trace data (list of hops)
                         if isinstance(trace_data, list):
+                            hops: List[Hop] = []
                             for hop in trace_data:
-                                hop_ip = hop.get('ipaddr')
-                                if hop_ip:  # Only add valid IPs
-                                    trace_path.append(hop_ip)
+                                hops.append(Hop.from_nmap_hop(hop))
 
-                        # Add final destination
-                        trace_path.append(ip)
-
-                        # Update node's topology information
-                        discovered_nodes[ip].update_topology(trace_path)
+                            nodes.add_hop_list(ip, hops)
 
             print(f"Found {len(active_ips)} active hosts")
-
-            # Step 2: Topology discovery using traceroute
-            topology_map = {}
-            for ip in active_ips:
-                if scan_stop_event.is_set():
-                    break
-
-                hops = get_traceroute(ip)
-                if hops:
-                    topology_map[ip] = {
-                        'path': hops,
-                        'hop_distance': len(hops)
-                    }
-                    # Update node with topology information
-                    if ip in discovered_nodes:
-                        node = discovered_nodes[ip]
-                        node.update_topology(hops)
-                        discovered_nodes[ip] = node
 
             # Step 3: Detailed scan of active hosts
             for ip in active_ips:
@@ -179,7 +223,7 @@ def scan_network():
                     break
 
                 print(f"Detailed scan of {ip}")
-                node = discovered_nodes[ip]
+                node = nodes.get_node(ip)
 
                 # Get hostname
                 try:
@@ -232,6 +276,7 @@ def scan_network():
                     break
                 time.sleep(0.1)
 
+
 @app.post("/start_scan")
 async def start_scan():
     global scan_thread
@@ -254,8 +299,13 @@ async def stop_scan():
 
 @app.get("/nodes", response_model=List[Node])
 async def get_nodes() -> List[Node]:
-    return list(discovered_nodes.values())
+    return list(nodes.get_nodes())
 
+
+# Global storage for discovered nodes
+nodes = Nodes(localhost_ip=get_lan_ip())
+scan_thread: Optional[threading.Thread] = None
+scan_stop_event = threading.Event()
 
 if __name__ == "__main__":
     import uvicorn

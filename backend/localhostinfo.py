@@ -1,6 +1,7 @@
 import socket
 import psutil
 
+
 def get_internet_interface_info():
     """
     Ottieni l'indirizzo IP e il MAC address dell'interfaccia che connette a Internet.
@@ -25,12 +26,18 @@ def get_internet_interface_info():
         print(f"Errore: {e}")
         return None
 
-# Recupera l'indirizzo IP e il MAC address
-interface_info = get_internet_interface_info()
 
-if interface_info:
-    print(f"Interfaccia: {interface_info['interface']}")
-    print(f"IP Address: {interface_info['ip']}")
-    print(f"MAC Address: {interface_info['mac']}")
-else:
-    print("Impossibile recuperare le informazioni dell'interfaccia.")
+def main():
+    # Recupera l'indirizzo IP e il MAC address
+    interface_info = get_internet_interface_info()
+
+    if interface_info:
+        print(f"Interfaccia: {interface_info['interface']}")
+        print(f"IP Address: {interface_info['ip']}")
+        print(f"MAC Address: {interface_info['mac']}")
+    else:
+        print("Impossibile recuperare le informazioni dell'interfaccia.")
+
+
+if __name__ == "__main__":
+    main()
