@@ -12,7 +12,8 @@ from starlette.middleware.cors import CORSMiddleware
 from model.hop import Hop
 from model.node import Node
 from model.nodes import Nodes
-from nmap_wrapper import NmapWrapper as PortScanner
+from controller.nmap_wrapper import NmapWrapper as PortScanner
+from controller.LLMPROVA import  talk_about_nodes
 
 app = FastAPI()
 
@@ -111,6 +112,9 @@ def scan_network():
 
             print(f"Found {len(active_ips)} active hosts")
 
+            explain = talk_about_nodes(nodes.get_nodes())
+            print(explain)
+
             # Step 3: Detailed scan of active hosts
             for ip in active_ips:
                 if scan_stop_event.is_set():
@@ -195,6 +199,14 @@ async def stop_scan():
 async def get_nodes() -> List[Node]:
     return list(nodes.get_nodes())
 
+@app.get("/network-summary")
+async def get_nodes_description():
+    # Recupera i nodi
+    all_nodes = list(nodes.get_nodes())
+    # Chiedi all'LLM di descriverli
+    description = talk_about_nodes(all_nodes)
+    # Restituisci la descrizione in formato JSON
+    return {"description": description}
 
 nodes = Nodes(localhost_ip=get_lan_ip())
 scan_thread: Optional[threading.Thread] = None
