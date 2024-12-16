@@ -16,6 +16,7 @@ class Node(BaseModel):
     # Topology related fields
     connected_to: List[str] = []  # List of IPs this node is connected to
     hop_distance: Optional[int] = None  # Number of hops from the scanning machine
+    node_type: Optional[str] = None  # Type of node (e.g. gateway)
 
     def add_edge(self, ip: str):
         self.connected_to.append(ip)

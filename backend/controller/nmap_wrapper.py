@@ -1,6 +1,6 @@
 from typing import override
 
-from nmap import *
+from nmap import PortScanner, PortScannerError
 from xml.etree import ElementTree as ET
 
 

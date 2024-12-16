@@ -4,9 +4,11 @@ import time
 from datetime import datetime
 from functools import lru_cache
 from typing import List, Optional
+import netifaces
 
 import psutil
 from fastapi import FastAPI
+from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
 from model.hop import Hop
@@ -72,6 +74,15 @@ def get_traceroute(ip: str) -> List[str]:
     return []
 
 
+def get_default_gateway():
+    """Get the default gateway IP address"""
+    try:
+        gateways = netifaces.gateways()
+        default_gateway = gateways['default'][netifaces.AF_INET][0]
+        return default_gateway
+    except:
+        return None
+
 def scan_network():
     while not scan_stop_event.is_set():
         try:
@@ -112,8 +123,30 @@ def scan_network():
 
             print(f"Found {len(active_ips)} active hosts")
 
-            explain = talk_about_nodes(nodes.get_nodes())
-            print(explain)
+            # Step 2: Identify LAN gateway
+            gateway_ip = get_default_gateway()
+            if gateway_ip and gateway_ip in active_ips:
+                gateway_node = nodes.get_node(gateway_ip)
+                if gateway_node:
+                    gateway_node.node_type = "gateway"
+                    gateway_node.connected_to = []  # Reset gateway connections
+
+                    # Get all nodes connected to localhost
+                    localhost_node = nodes.get_node(get_lan_ip())
+                    if localhost_node:
+                        # Reset localhost connections except to gateway
+                        localhost_node.connected_to = [gateway_ip]
+
+                        # Process all active nodes
+                        for node_ip in active_ips:
+                            if node_ip != gateway_ip and node_ip != get_lan_ip():
+                                # Add connection from gateway to node
+                                gateway_node.connected_to.append(node_ip)
+
+                                # Reset node's connections to only point to gateway
+                                node = nodes.get_node(node_ip)
+                                if node:
+                                    node.connected_to = []  # Clear existing connections
 
             # Step 3: Detailed scan of active hosts
             for ip in active_ips:
@@ -199,7 +232,12 @@ async def stop_scan():
 async def get_nodes() -> List[Node]:
     return list(nodes.get_nodes())
 
-@app.get("/network-summary")
+
+class NetworkSummary(BaseModel):
+    description: str
+
+
+@app.get("/network-summary", response_model=NetworkSummary)
 async def get_nodes_description():
     # Recupera i nodi
     all_nodes = list(nodes.get_nodes())
