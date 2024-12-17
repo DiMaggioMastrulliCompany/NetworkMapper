@@ -5,6 +5,7 @@
         startScanStartScanPost,
         stopScanStopScanPost,
         getNodesDescriptionNetworkSummaryGet,
+        scanHostScanHostPost,
     } from "$lib/api";
     import type { Node } from "$lib/api";
     import cytoscape from "cytoscape";
@@ -18,6 +19,7 @@
     let networkSummary: string = ""; // New state variable
     let selectedNodeId: string | null = null;
     let nodeListContainer: HTMLDivElement;
+    let externalHost: string = "";
 
     onMount(() => {
         cy = cytoscape({
@@ -170,14 +172,18 @@
             if (node.connected_to) {
                 node.connected_to.forEach((targetIp) => {
                     if (cy.$id(targetIp).length > 0) {
-                        cy.add({
-                            group: "edges",
-                            data: {
-                                id: `${node.ip}-${targetIp}`,
-                                source: node.ip,
-                                target: targetIp,
-                            },
-                        });
+                        const edgeId = `${node.ip}-${targetIp}`;
+                        // Skip if edge already exists
+                        if (!cy.$id(edgeId).length) {
+                            cy.add({
+                                group: "edges",
+                                data: {
+                                    id: edgeId,
+                                    source: node.ip,
+                                    target: targetIp,
+                                },
+                            });
+                        }
                     }
                 });
             }
@@ -188,7 +194,7 @@
             const layout = cy.layout({
                 name: "concentric",
                 concentric: function (node) {
-                    return node.data("type") === "gateway" ? 2 : node.data("hopDistance") || 1;
+                    return node.data("type") === "gateway" ? 2 : 2 - node.data("hopDistance") || 1;
                 },
                 levelWidth: () => 1,
                 minNodeSpacing: 50,
@@ -225,7 +231,39 @@
 <div class="container mx-auto p-4">
     <div class="mb-4 flex justify-between items-center">
         <h1 class="text-2xl font-bold">Network Topology Mapper</h1>
-        <div>
+        <div class="flex gap-4">
+            <!-- Add external host scan form -->
+            {#if scanning}
+                <form
+                    class="flex gap-2"
+                    on:submit|preventDefault={async () => {
+                        if (externalHost) {
+                            const response = await scanHostScanHostPost({ body: { ip: externalHost } });
+                            if (response.data) {
+                                fetchNodes();
+                            } else {
+                                console.error("Error scanning external host:", response.error);
+                            }
+                            externalHost = ""; // Clear input after scan
+                        }
+                    }}
+                >
+                    <input
+                        type="text"
+                        bind:value={externalHost}
+                        placeholder="IP or subnet (e.g. 8.8.8.8 or 1.1.1.0/24)"
+                        class="px-3 py-2 border rounded"
+                    />
+                    <button
+                        type="submit"
+                        class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+                        disabled={!externalHost}
+                    >
+                        Scan External
+                    </button>
+                </form>
+            {/if}
+            <!-- Existing scan buttons -->
             {#if !scanning}
                 <button
                     class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
@@ -277,7 +315,15 @@
                             >
                                 <h3 class="font-bold">{node.hostname || node.ip}</h3>
                                 <p>IP: {node.ip}</p>
-                                <p>OS: {node.os || "Unknown"}</p>
+                                {#if node.mac_address && node.mac_address !== "unknown"}
+                                    <p>MAC: {node.mac_address}</p>
+                                    {#if node.vendor}
+                                        <p>Vendor: {node.vendor}</p>
+                                    {/if}
+                                {/if}
+                                {#if node.os}
+                                    <p>OS: {node.os}</p>
+                                {/if}
                                 <p>Status: {node.status}</p>
                                 {#if node.open_ports && node.open_ports.length > 0}
                                     <div class="mt-2">
@@ -288,6 +334,9 @@
                                             {/each}
                                         </ul>
                                     </div>
+                                {/if}
+                                {#if node.hop_distance}
+                                    <p class="text-sm text-gray-500 mt-2">Hop Distance: {node.hop_distance}</p>
                                 {/if}
                                 <p class="text-sm text-gray-500 mt-2">
                                     Last seen: {new Date(node.last_seen).toLocaleString()}

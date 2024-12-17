@@ -8,6 +8,7 @@ class Node(BaseModel):
     ip: str
     mac_address: Optional[str] = None
     hostname: Optional[str] = None
+    vendor: Optional[str] = None
     os: Optional[str] = None
     open_ports: List[Dict[str, int | str]] = []
     last_seen: str
