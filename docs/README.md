@@ -10,27 +10,49 @@ NetworkMapper è un'applicazione progettata per mappare la topologia di rete. È
 ## Struttura del progetto
 
 .
+
 ├── NetworkMapper.code-workspace
+
 ├── backend
+
 │   ├── main.py
+
 │   └── requirements.txt
+
 ├── docs
+
 │   └── README.md
+
 └── frontend
+
     ├── README.md
+    
     ├── package-lock.json
+    
     ├── package.json
+    
     ├── postcss.config.js
+    
     ├── src
+    
     │   ├── app.css
+    
     │   ├── app.d.ts
+    
     │   ├── app.html
+    
     │   └── routes
+    
     ├── static
+    
     │   └── favicon.png
+    
     ├── svelte.config.js
+    
     ├── tailwind.config.ts
+    
     ├── tsconfig.json
+    
     └── vite.config.ts
 
 ## Requisiti
