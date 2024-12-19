@@ -8,7 +8,7 @@ NetworkMapper è un'applicazione progettata per mappare la topologia di rete. È
 - Configurazione personalizzabile.
 
 ## Struttura del progetto
-
+```plaintext
 .
 ├── NetworkMapper.code-workspace
 ├── backend
@@ -32,6 +32,7 @@ NetworkMapper è un'applicazione progettata per mappare la topologia di rete. È
     ├── tailwind.config.ts
     ├── tsconfig.json
     └── vite.config.ts
+```
 
 ## Requisiti
 - Python 3.9+
@@ -40,5 +41,36 @@ NetworkMapper è un'applicazione progettata per mappare la topologia di rete. È
 ## Installazione
 ### Backend
 1. Naviga nella directory `backend`:
-   ```bash
-   cd backend
+
+    ```bash
+    cd backend
+    ```
+
+2. Installa le dipendenze richieste:
+    ```bash
+   pip install -r requirements.txt
+    ```
+3. Avvia il backend:
+
+    ```bash
+    python ./main.py`
+    ```
+4. Lascia il terminale aperto.
+
+### Frontend
+1. Apri un nuovo terminale e naviga nella directory `frontend`:
+    ```bash
+    cd frontend`
+    ```
+
+2. Installa le dipendenze del frontend:
+    ```bash
+    npm install`
+    ```
+
+3. Avvia il server di sviluppo:
+    ```bash
+    npm run dev`
+    ```
+
+4. Apri il link mostrato nel terminale nel tuo browser per accedere all'interfaccia utente.
