@@ -53,24 +53,24 @@ NetworkMapper è un'applicazione progettata per mappare la topologia di rete. È
 3. Avvia il backend:
 
     ```bash
-    python ./main.py`
+    python ./main.py
     ```
 4. Lascia il terminale aperto.
 
 ### Frontend
 1. Apri un nuovo terminale e naviga nella directory `frontend`:
     ```bash
-    cd frontend`
+    cd frontend
     ```
 
 2. Installa le dipendenze del frontend:
     ```bash
-    npm install`
+    npm install
     ```
 
 3. Avvia il server di sviluppo:
     ```bash
-    npm run dev`
+    npm run dev
     ```
 
 4. Apri il link mostrato nel terminale nel tuo browser per accedere all'interfaccia utente.
